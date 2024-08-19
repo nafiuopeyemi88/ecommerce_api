@@ -1,86 +1,97 @@
+const Review = require('../models/Review');
 const Product = require('../models/Product');
+
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
-const path = require('path');
+const { checkPermissions } = require('../utils');
 
-const createProduct = async (req, res) => {
-  req.body.user = req.user.userId;
-  const product = await Product.create(req.body);
-  res.status(StatusCodes.CREATED).json({ product });
-};
-const getAllProducts = async (req, res) => {
-  const products = await Product.find({});
+const createReview = async (req, res) => {
+  const { product: productId } = req.body;
 
-  res.status(StatusCodes.OK).json({ products, count: products.length });
-};
-const getSingleProduct = async (req, res) => {
-  const { id: productId } = req.params;
+  const isValidProduct = await Product.findOne({ _id: productId });
 
-  const product = await Product.findOne({ _id: productId }).populate('reviews');
-
-  if (!product) {
+  if (!isValidProduct) {
     throw new CustomError.NotFoundError(`No product with id : ${productId}`);
   }
 
-  res.status(StatusCodes.OK).json({ product });
-};
-const updateProduct = async (req, res) => {
-  const { id: productId } = req.params;
-
-  const product = await Product.findOneAndUpdate({ _id: productId }, req.body, {
-    new: true,
-    runValidators: true,
+  const alreadySubmitted = await Review.findOne({
+    product: productId,
+    user: req.user.userId,
   });
 
-  if (!product) {
-    throw new CustomError.NotFoundError(`No product with id : ${productId}`);
-  }
-
-  res.status(StatusCodes.OK).json({ product });
-};
-const deleteProduct = async (req, res) => {
-  const { id: productId } = req.params;
-
-  const product = await Product.findOne({ _id: productId });
-
-  if (!product) {
-    throw new CustomError.NotFoundError(`No product with id : ${productId}`);
-  }
-
-  await product.remove();
-  res.status(StatusCodes.OK).json({ msg: 'Success! Product removed.' });
-};
-const uploadImage = async (req, res) => {
-  if (!req.files) {
-    throw new CustomError.BadRequestError('No File Uploaded');
-  }
-  const productImage = req.files.image;
-
-  if (!productImage.mimetype.startsWith('image')) {
-    throw new CustomError.BadRequestError('Please Upload Image');
-  }
-
-  const maxSize = 1024 * 1024;
-
-  if (productImage.size > maxSize) {
+  if (alreadySubmitted) {
     throw new CustomError.BadRequestError(
-      'Please upload image smaller than 1MB'
+      'Already submitted review for this product'
     );
   }
 
-  const imagePath = path.join(
-    __dirname,
-    '../public/uploads/' + `${productImage.name}`
-  );
-  await productImage.mv(imagePath);
-  res.status(StatusCodes.OK).json({ image: `/uploads/${productImage.name}` });
+  req.body.user = req.user.userId;
+  const review = await Review.create(req.body);
+  res.status(StatusCodes.CREATED).json({ review });
+};
+const getAllReviews = async (req, res) => {
+  const reviews = await Review.find({}).populate({
+    path: 'product',
+    select: 'name company price',
+  });
+
+  res.status(StatusCodes.OK).json({ reviews, count: reviews.length });
+};
+const getSingleReview = async (req, res) => {
+  const { id: reviewId } = req.params;
+
+  const review = await Review.findOne({ _id: reviewId });
+
+  if (!review) {
+    throw new CustomError.NotFoundError(`No review with id ${reviewId}`);
+  }
+
+  res.status(StatusCodes.OK).json({ review });
+};
+const updateReview = async (req, res) => {
+  const { id: reviewId } = req.params;
+  const { rating, title, comment } = req.body;
+
+  const review = await Review.findOne({ _id: reviewId });
+
+  if (!review) {
+    throw new CustomError.NotFoundError(`No review with id ${reviewId}`);
+  }
+
+  checkPermissions(req.user, review.user);
+
+  review.rating = rating;
+  review.title = title;
+  review.comment = comment;
+
+  await review.save();
+  res.status(StatusCodes.OK).json({ review });
+};
+const deleteReview = async (req, res) => {
+  const { id: reviewId } = req.params;
+
+  const review = await Review.findOne({ _id: reviewId });
+
+  if (!review) {
+    throw new CustomError.NotFoundError(`No review with id ${reviewId}`);
+  }
+
+  checkPermissions(req.user, review.user);
+  await review.remove();
+  res.status(StatusCodes.OK).json({ msg: 'Success! Review removed' });
+};
+
+const getSingleProductReviews = async (req, res) => {
+  const { id: productId } = req.params;
+  const reviews = await Review.find({ product: productId });
+  res.status(StatusCodes.OK).json({ reviews, count: reviews.length });
 };
 
 module.exports = {
-  createProduct,
-  getAllProducts,
-  getSingleProduct,
-  updateProduct,
-  deleteProduct,
-  uploadImage,
+  createReview,
+  getAllReviews,
+  getSingleReview,
+  updateReview,
+  deleteReview,
+  getSingleProductReviews,
 };
